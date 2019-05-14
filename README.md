@@ -1,0 +1,3 @@
+## Task 1 参数传递
+首先再process.c中, creat和start函数均未对filneame进行分隔处理,所以要在create中把真正的文件名分离出来正确的传给thread_create作为进程名字,然后在start里面或者load里面把传递的参数压入栈中
+
