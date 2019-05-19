@@ -94,6 +94,11 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
+    int exit_error;
+    bool wait_exec;                     /* 是否执行,  */
+    struct thread* parent;              /* 父进程 */
+    struct list files;
+    int fd_count;
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */

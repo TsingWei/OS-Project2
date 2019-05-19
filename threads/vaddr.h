@@ -56,7 +56,7 @@ static inline void *pg_round_down (const void *va) {
 static inline bool
 is_user_vaddr (const void *vaddr) 
 {
-  return vaddr < PHYS_BASE;
+  return vaddr < PHYS_BASE && vaddr >= (void *)0x08048000;
 }
 
 /* Returns true if VADDR is a kernel virtual address. */

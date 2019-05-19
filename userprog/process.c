@@ -8,6 +8,7 @@
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "userprog/syscall.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -37,10 +38,10 @@ process_execute (const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
-  char *save_ptr;
-  file_name = strtok_r (file_name," ",&save_ptr);
+  char *save_ptr, *real_file_name;
+  real_file_name = strtok_r (file_name," ",&save_ptr);
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (real_file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
   return tid;
@@ -60,12 +61,66 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+
+  
+  int argc = 0,i;
+  char *token, *save_ptr;
+  char * args_copy = malloc(strlen(file_name)+1); // +1 = '\0'
+  // 再复制一次命令, 对参数计数
+  strlcpy (args_copy, file_name, strlen(file_name)+1);
+  token = strtok_r (args_copy, " ", &save_ptr);
+  success = load (token, &if_.eip, &if_.esp);
+    /* If load failed, quit. */
+  if (!success){
+    palloc_free_page (file_name);
+    thread_exit ();
+  } 
+  char *esp = if_.esp; // 这里必须要放在load之后,因为load要把esp初始化
+  // argc ++;
+  for (; token != NULL; token = strtok_r (NULL, " ", &save_ptr))
+    argc++;
+  // printf("argc = %d\n",argc);
+  int *argv = calloc(argc,sizeof(int));
+  for (token = strtok_r (file_name, " ", &save_ptr),i=0; token != NULL;
+  token = strtok_r (NULL, " ", &save_ptr),i++)
+  {
+    esp -= strlen(token) + 1;
+    // printf("esp = %x, token = '%s'.\n",esp,token);
+    // hex_dump(esp, esp, (int) ((size_t) PHYS_BASE - (size_t) esp), true);
+    memcpy(esp,token,strlen(token) + 1);
+    argv[i]=esp;
+  }
+  // printf("Before: esp = %x\n",esp);
+  // hex_dump(esp,esp,PHYS_BASE-(int)esp,true);
+  esp -= 4+(int)esp%4;// 单周期对齐,这里运算得负数,要先加4
+  // printf("After: esp = %x\n",esp);
+  // hex_dump(esp,esp,PHYS_BASE-(int)esp,true);
+  esp -= 4*sizeof(char); // 留空4字节  空参数
+  // hex_dump(esp,esp,PHYS_BASE-(int)esp,true);
+  memset(esp,0,4*sizeof(char));
+  for(i=argc-1;i>=0;i--) // 倒放argv[i]
+  {
+    esp-=4*sizeof(char);
+    memcpy(esp,&argv[i],4*sizeof(char));
+    // hex_dump(esp,esp,PHYS_BASE-(int)esp,true);
+  }
+  int pt = esp;
+  esp-=4*sizeof(char);
+  memcpy(esp,&pt,4*sizeof(char));   // 放置 argv
+
+  esp-=4*sizeof(char);
+  memcpy(esp,&argc,4*sizeof(char)); // 放置 argc
+
+  esp-=4*sizeof(char);
+  memset(esp,0,sizeof(int));        // 放置 void
+
+  if_.esp=esp;
+  // printf("esp = %x\n",esp);
+  // hex_dump(esp,esp,(int)PHYS_BASE-(int)esp,true);
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
-  if (!success) 
-    thread_exit ();
+
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -89,6 +144,8 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+  // sema_down(&thread_current()->wait_exec);// 等待用信号量
+  while(!thread_current()->wait_exec);
   return -1;
 }
 
@@ -98,7 +155,9 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
-
+  process_close_file(-1);
+  int exit_code = cur->exit_error;
+  printf("%s: exit(%d)\n",cur->name,exit_code);
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
@@ -115,6 +174,7 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+  // sema_up(&thread_current()->parent->wait_exec);
 }
 
 /* Sets up the CPU for running user code in the current
@@ -442,6 +502,12 @@ setup_stack (void **esp)
       else
         palloc_free_page (kpage);
     }
+  // // 测试hex_dump的用法
+  // char my_string[8] = "CS305\0";
+  // *esp -= sizeof(char) * 8;
+  // memcpy(*esp, my_string, sizeof(char) * 8);
+  // hex_dump((uintptr_t)*esp, *esp, sizeof(char) * 8, true);
+  // // 结束测试
   return success;
 }
 
