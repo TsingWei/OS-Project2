@@ -38,10 +38,15 @@ process_execute (const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
-  char *save_ptr, *real_file_name;
-  real_file_name = strtok_r (file_name," ",&save_ptr);
+  // printf("================CMD:%s========\n",file_name);
+  char *save_ptr, *_name;
+  // 再复制一次,避免直接引用导致的内核访问错误
+  _name = malloc(strlen(file_name)+1);
+  strlcpy (_name, file_name, strlen(file_name)+1);
+  _name = strtok_r (_name," ",&save_ptr);
+  // printf("================NAME:%s========\n",file_name);
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (real_file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
 
