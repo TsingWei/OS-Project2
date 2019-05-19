@@ -44,6 +44,11 @@ process_execute (const char *file_name)
   tid = thread_create (real_file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+
+  sema_down(&thread_current()->waiting_child); // 等待子进程唤醒
+  if(!thread_current()->load_success)          // 子进程是否加载成功
+    return -1;
+
   return tid;
 }
 
@@ -73,6 +78,8 @@ start_process (void *file_name_)
     /* If load failed, quit. */
   if (!success){
     palloc_free_page (file_name);
+    thread_current()->parent->load_success=false;
+    sema_up(&thread_current()->parent->waiting_child); // 加载不成功,唤醒父进程
     thread_exit ();
   } 
   char *esp = if_.esp; // 这里必须要放在load之后,因为load要把esp初始化
@@ -118,9 +125,9 @@ start_process (void *file_name_)
   // printf("esp = %x\n",esp);
   // hex_dump(esp,esp,(int)PHYS_BASE-(int)esp,true);
 
-  /* If load failed, quit. */
   palloc_free_page (file_name);
-
+  thread_current()->parent->load_success=true;
+  sema_up(&thread_current()->parent->waiting_child); // 加载成功,唤醒父进程
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -142,11 +149,20 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
-  // sema_down(&thread_current()->wait_exec);// 等待用信号量
-  while(!thread_current()->wait_exec);
-  return -1;
+  // 线性查找该子进程
+  struct child_process* cp = get_child_process(child_tid);
+  if (!cp)   
+    return -1;
+  thread_current()->wait_on = cp->tid;
+    
+  if(!cp->used)  // 每个子进程只能唤醒wait一次
+    sema_down(&thread_current()->waiting_child); // 等待子进程UP该信号量
+
+  int temp = cp->exit_error;
+  list_remove(&cp->elem);  // 到这里子进程已经结束生命了, 移除该子进程
+  return temp;             // 返回子进程的退出值
 }
 
 /* Free the current process's resources. */
@@ -155,9 +171,12 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+  if(cur->exit_error==-16) // 如果是被内核杀掉(默认值)
+      exit_proc(-1);
   process_close_file(-1);
   int exit_code = cur->exit_error;
   printf("%s: exit(%d)\n",cur->name,exit_code);
+
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;

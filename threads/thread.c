@@ -11,6 +11,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "userprog/syscall.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -182,7 +183,11 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
-
+  struct child_process* c = malloc(sizeof(struct child_process));
+  c->tid = tid;
+  c->exit_error = t->exit_error;
+  c->used = false;
+  list_push_back (&running_thread()->childs, &c->elem);
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
   kf->eip = NULL;
@@ -464,9 +469,13 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
   t->parent = running_thread();
-  t->wait_exec = 0;
+  t->exit_error = -16;
+  t->wait_on = 0;
   list_init (&t->files);
+  list_init (&t->childs);
   t->fd_count=2;
+
+  sema_init(&t->waiting_child,0);
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);

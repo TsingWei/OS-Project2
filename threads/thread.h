@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "fixed_point.h"
+#include "threads/synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -95,10 +96,14 @@ struct thread
     struct list_elem elem;              /* List element. */
 
     int exit_error;
-    bool wait_exec;                     /* 是否执行,  */
+    // bool wait_exec;                     /* 是否执行,  */
+    bool load_success;                  /* 是否加载ELF成功 */
     struct thread* parent;              /* 父进程 */
     struct list files;
-    int fd_count;
+    struct list childs;
+    struct semaphore waiting_child;     /* 是否在wait子进程 */
+    int fd_count;                       /* 当前文件描述符 号 */
+    int wait_on;                        /* 在等谁 */
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */

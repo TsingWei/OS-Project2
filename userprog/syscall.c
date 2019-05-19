@@ -15,6 +15,7 @@
 #define STDIN_FILENO 0  // 标准输入
 #define STDERR_FILENO 2 // 标准错误
 
+static void syscall_handler (struct intr_frame *f);
 void get_arg (struct intr_frame *f, int *arg, int n);
 void check_valid_string (const void* str);
 
@@ -54,9 +55,7 @@ syscall_handler (struct intr_frame *f)
     {
       get_arg(f, &arg[0], 1);
       int exit_error = arg[0];
-      thread_current()->parent->wait_exec = true;
-      thread_current()->exit_error = exit_error;
-      thread_exit();
+      exit_proc(exit_error);
       break;
     }
 
@@ -64,7 +63,27 @@ syscall_handler (struct intr_frame *f)
     {
       get_arg(f, &arg[0], 1);
       char* cmd_line = (char*)arg[0];
-      f->eax = process_execute(cmd_line);
+      // f->eax = exec_proc(cmd_line);
+      lock_acquire(&file_lock);
+      char * fn_cp = malloc (strlen(cmd_line)+1);
+        strlcpy(fn_cp, cmd_line, strlen(cmd_line)+1);
+        
+        char * save_ptr;
+        fn_cp = strtok_r(fn_cp," ",&save_ptr);
+
+      struct file* file = filesys_open (fn_cp);
+
+        if(file==NULL)
+        {
+          lock_release(&file_lock);
+          f->eax = -1;
+        }
+        else
+        {
+          file_close(file);
+          lock_release(&file_lock);
+          f->eax =  process_execute(cmd_line);
+        }
       break;
     }
 
@@ -149,7 +168,7 @@ syscall_handler (struct intr_frame *f)
     {
       get_arg(f, &arg[0], 3);
       int fd = arg[0];
-      void *buffer =  arg[1];
+      void *buffer = check_addr((const void *) arg[1]);
       unsigned size = arg[2];
       if (fd == STDIN_FILENO)
       {
@@ -180,7 +199,7 @@ syscall_handler (struct intr_frame *f)
     {
       get_arg(f, &arg[0], 3);
       int fd = arg[0];
-      void *buffer =  arg[1];
+      void *buffer = check_addr((const void *) arg[1]);
       unsigned size = arg[2];
       if (fd == STDOUT_FILENO)
       {
@@ -266,9 +285,7 @@ syscall_handler (struct intr_frame *f)
 
     default:
     {
-      thread_current()->parent->wait_exec = true;
-      thread_current()->exit_error = -1;
-      thread_exit();
+      exit_proc(-1);
       break;
     }			
       
@@ -297,6 +314,7 @@ struct file* process_get_file (int fd)
 // 关闭当前进程所有打开的的文件
 void process_close_file( int fd)
 {
+  lock_acquire(&file_lock);
   struct thread *t = thread_current();
   struct list_elem *next, *e = list_begin(&t->files);
 
@@ -316,6 +334,7 @@ void process_close_file( int fd)
     }
     e = next;
   }
+  lock_release(&file_lock);
 }
 
 // 检查地址是否为用户空间地址,并检查对应page是否存在,并且返回对应的内核可见地址
@@ -323,17 +342,13 @@ void* check_addr(const void *vaddr)
 {
 	if (!is_user_vaddr(vaddr))
 	{
-		thread_current()->parent->wait_exec = true;
-		thread_current()->exit_error = -1;
-		thread_exit();
+		exit_proc(-1);
 		return 0;
 	}
 	void *ptr = pagedir_get_page(thread_current()->pagedir, vaddr);
 	if (!ptr)
 	{
-		thread_current()->parent->wait_exec = true;
-		thread_current()->exit_error = -1;
-		thread_exit();
+		exit_proc(-1);
 		return 0;
 	}
 	return (int)ptr;
@@ -361,3 +376,70 @@ void check_valid_string (const void* str)
     }
 }
 
+// 找当前进程的子进程里中对应tid的进程,线性
+struct child_process* get_child_process (int tid)
+{
+  struct thread *t = thread_current();
+  struct list_elem *e;
+
+  for (e = list_begin (&t->childs); e != list_end (&t->childs);
+       e = list_next (e))
+  {
+    struct child_process *cp = list_entry (e, struct child_process, elem);
+    if (tid == cp->tid)
+    {
+      return cp;
+    }
+  }
+  return NULL;
+}
+
+// exec函数
+int exec_proc(char *file_name)
+{
+	lock_acquire(&file_lock);
+	char * fn_cp = malloc (strlen(file_name)+1);
+	  strlcpy(fn_cp, file_name, strlen(file_name)+1);
+	  
+	  char * save_ptr;
+	  fn_cp = strtok_r(fn_cp," ",&save_ptr);
+
+	 struct file* f = filesys_open (fn_cp);
+
+	  if(f==NULL)
+	  {
+	  	lock_release(&file_lock);
+	  	return -1;
+	  }
+	  else
+	  {
+	  	file_close(f);
+	  	lock_release(&file_lock);
+	  	return process_execute(file_name);
+	  }
+}
+
+// 退出函数, 要从父亲的子进程列表中删掉自己, 线性 
+// 如果父亲在等自己, 唤醒父亲
+void exit_proc(int status)
+{
+	struct list_elem *e;
+
+      for (e = list_begin (&thread_current()->parent->childs);
+      e != list_end (&thread_current()->parent->childs);
+      e = list_next (e))
+      {
+        struct child_process *f = list_entry (e, struct child_process, elem);
+        if(f->tid == thread_current()->tid)
+        {
+          f->used = true;
+          f->exit_error = status;
+        }
+      }
+	thread_current()->exit_error = status;
+  // 如果当前的父亲正在等待当前进程, 唤醒父进程
+	if(thread_current()->parent->wait_on == thread_current()->tid)
+		sema_up(&thread_current()->parent->waiting_child);
+
+	thread_exit();
+}
