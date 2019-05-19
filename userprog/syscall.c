@@ -62,6 +62,7 @@ syscall_handler (struct intr_frame *f)
     case SYS_EXEC:
     {
       get_arg(f, &arg[0], 1);
+      check_valid_string((const void *) arg[0]);
       char* cmd_line = (char*)arg[0];
       // f->eax = exec_proc(cmd_line);
       lock_acquire(&file_lock);
@@ -362,7 +363,7 @@ void get_arg (struct intr_frame *f, int *arg, int n)
   for (i = 0; i < n; i++)
     {
       ptr = (int *) f->esp + i + 1;
-      check_addr((const void *) ptr);
+      ptr = (int *) check_addr((const void *) ptr);
       arg[i] = *ptr;
     }
 }
