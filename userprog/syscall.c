@@ -438,6 +438,8 @@ void exit_proc(int status)
       }
 	thread_current()->exit_error = status;
   // 如果当前的父亲正在等待当前进程, 唤醒父进程
+  int exit_code = thread_current()->exit_error;
+  printf("%s: exit(%d)\n",thread_current()->name,exit_code);
 	if(thread_current()->parent->wait_on == thread_current()->tid)
 		sema_up(&thread_current()->parent->waiting_child);
 

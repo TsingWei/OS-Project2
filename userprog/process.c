@@ -174,8 +174,6 @@ process_exit (void)
   if(cur->exit_error==-16) // 如果是被内核杀掉(默认值)
       exit_proc(-1);
   process_close_file(-1);
-  int exit_code = cur->exit_error;
-  printf("%s: exit(%d)\n",cur->name,exit_code);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
